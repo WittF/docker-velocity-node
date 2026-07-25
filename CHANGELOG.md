@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/WittF/docker-velocity-node/compare/v1.0.1...v1.0.2) (2026-07-25)
+
+
+### 🐛 修复
+
+* **ci:** 关闭 provenance/sbom 附加清单，境内镜像源拉不动 ([635bacf](https://github.com/WittF/docker-velocity-node/commit/635bacf0df2e2b44a0ce3ca347530e07881a40d9))
+
 ## [1.0.1](https://github.com/WittF/docker-velocity-node/compare/v1.0.0...v1.0.1) (2026-07-25)
 
 
