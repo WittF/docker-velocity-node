@@ -1,0 +1,33 @@
+{
+  "name": "velocity-node",
+  "version": "1.0.0",
+  "description": "Velocity 中转节点 Docker 镜像（Zulu JDK 25，运行时拉取 jar/config/plugins）",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WittF/docker-velocity-node.git"
+  },
+  "keywords": [
+    "velocity",
+    "minecraft",
+    "docker",
+    "proxy",
+    "azul-zulu"
+  ],
+  "author": "wittf",
+  "license": "MIT",
+  "private": false,
+  "scripts": {
+    "build": "docker build -t velocity-node .",
+    "test": "docker run --rm velocity-node java -version",
+    "release": "semantic-release"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^11.0.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^9.0.0",
+    "@semantic-release/release-notes-generator": "^12.0.0",
+    "conventional-changelog-conventionalcommits": "^7.0.2",
+    "semantic-release": "^22.0.0"
+  }
+}

@@ -1,0 +1,189 @@
+name: Release and Publish
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  REGISTRY_GHCR: ghcr.io
+  REGISTRY_DOCKERHUB: docker.io
+  IMAGE_NAME: wittf/velocity-node
+
+jobs:
+  # 🔍 版本分析（不发布，只算出版本号）
+  version-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 分析版本信息（dry run）
+        id: semantic
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          semantic_version: 22
+          dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 🏗️ 构建并冒烟测试
+  build-and-test:
+    needs: version-check
+    if: needs.version-check.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t velocity-node:test .
+
+      - name: 🧪 校验 JDK 版本
+        run: |
+          echo "☕ 容器内 Java:"
+          docker run --rm velocity-node:test java -version 2>&1 | tee /tmp/java.txt
+          # Velocity(MC 26.2 兼容版) 需要 Java 25，低于 25 直接判失败，
+          # 避免再出现 UnsupportedClassVersionError 打挂全部节点
+          MAJOR=$(docker run --rm velocity-node:test java -XshowSettings:properties -version 2>&1 \
+                  | awk -F'= *' '/java.specification.version/ {print $2}' | tr -d ' ')
+          echo "解析出的主版本: ${MAJOR}"
+          if [ "${MAJOR}" -lt 25 ]; then
+            echo "::error::镜像 JDK 版本为 ${MAJOR}，低于要求的 25"
+            exit 1
+          fi
+
+      - name: 🧪 校验 entrypoint 缺少环境变量时会明确报错
+        run: |
+          set +e
+          OUT=$(docker run --rm velocity-node:test 2>&1)
+          CODE=$?
+          echo "$OUT"
+          echo "$OUT" | grep -q "VELOCITY_JAR_URL 环境变量未设置" || { echo "::error::未按预期报错"; exit 1; }
+          [ "$CODE" -ne 0 ] || { echo "::error::缺少必需环境变量时应以非零退出"; exit 1; }
+
+  # 🚀 推送到 GHCR + Docker Hub
+  push-to-registries:
+    needs: [version-check, build-and-test]
+    if: needs.version-check.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 没配 Docker Hub 凭证时只推 GHCR，不让整条流水线红掉
+      - name: 检查 Docker Hub 凭证
+        id: dh
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          IMAGES="${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}"
+          if [ -n "$DH_USER" ] && [ -n "$DH_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            IMAGES="${IMAGES}
+          ${{ env.REGISTRY_DOCKERHUB }}/${{ env.IMAGE_NAME }}"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN，本次只推送到 GHCR"
+          fi
+          {
+            echo "images<<__EOF__"
+            echo "$IMAGES"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 登录 Docker Hub
+        if: steps.dh.outputs.enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_DOCKERHUB }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 提取 Docker 元数据
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.dh.outputs.images }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.version-check.outputs.new_release_version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.version-check.outputs.new_release_version }}
+            type=semver,pattern={{major}},value=${{ needs.version-check.outputs.new_release_version }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=Velocity Node
+            org.opencontainers.image.description=Velocity 中转节点镜像（Zulu JDK 25，运行时拉取 jar/config/plugins）
+            org.opencontainers.image.version=${{ needs.version-check.outputs.new_release_version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 🏷️ 创建 GitHub Release
+  release:
+    needs: [version-check, push-to-registries]
+    if: needs.version-check.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 发布
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          semantic_version: 22
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
