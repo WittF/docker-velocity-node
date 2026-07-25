@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/WittF/docker-velocity-node/compare/v1.0.0...v1.0.1) (2026-07-25)
+
+
+### 🐛 修复
+
+* **ci:** 支持手动补推镜像，不再依赖有新版本 ([d5446ad](https://github.com/WittF/docker-velocity-node/commit/d5446ad0b79b09ce87f9df4cd129ec5efa808c86))
+
 ## 1.0.0 (2026-07-25)
 
 
