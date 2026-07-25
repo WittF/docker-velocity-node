@@ -170,9 +170,15 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 境内节点只能经 docker.1ms.run 这类镜像源拉取，它拉不动 buildx 默认附带的
+          # attestation/provenance 清单（表现为 pull 到一半报 could not fetch content
+          # descriptor ... not found）。关掉后推的是普通单架构镜像，兼容性最好。
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
